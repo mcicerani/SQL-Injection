@@ -1,0 +1,16 @@
+{
+    "name": "sql-injection-demo",
+    "version": "1.0.0",
+    "description": "A vulnerable Node.js app to demonstrate SQL Injection",
+    "main": "app.js",
+    "scripts": {
+      "start": "node app.js",
+      "attack": "node attack.js"
+    },
+    "dependencies": {
+      "express": "^4.17.1",
+      "mysql": "^2.18.1",
+      "axios": "^0.21.1"
+    }
+  }
+  
