@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8" />
+  <title>Search - SQLi Demo</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width:720px; margin:40px auto; }
+    input, button { padding:8px; font-size:16px; }
+    form { display:flex; gap:8px; }
+  </style>
+</head>
+<body>
+  <h1>Search (protetta)</h1>
+  <form method="get" action="/search/result">
+    <input name="user" placeholder="Inserisci username o payload" autocomplete="off" />
+    <button type="submit">Cerca</button>
+  </form>
+  <p style="color:#666">Esempio UNION (esfiltrazione): <code>' UNION SELECT 1, username, password FROM users -- </code></p>
+  <button><a style="color: white; text-decoration: none;" href="/logout">Logout</a></button>
+</body>
+</html>
+
+<!-- aggiungi questo blocco <script> in fondo a web/public/search.html, prima di </body> -->
+<script>
+  // helper: mostra un banner in cima alla pagina
+  function showBanner(text, type = 'info') {
+    const existing = document.getElementById('flash-banner');
+    if (existing) existing.remove();
+    const banner = document.createElement('div');
+    banner.id = 'flash-banner';
+    banner.style.padding = '12px';
+    banner.style.borderRadius = '6px';
+    banner.style.marginBottom = '12px';
+    banner.style.fontWeight = '600';
+    banner.style.boxShadow = '0 1px 4px rgba(0,0,0,0.06)';
+    banner.style.maxWidth = '900px';
+    banner.style.margin = '12px auto';
+    banner.style.textAlign = 'center';
+    if (type === 'success') {
+      banner.style.background = '#e6ffed';
+      banner.style.border = '1px solid #b2f5bf';
+      banner.style.color = '#064e3b';
+    } else if (type === 'error') {
+      banner.style.background = '#ffe6e6';
+      banner.style.border = '1px solid #f5b2b2';
+      banner.style.color = '#7a1222';
+    } else {
+      banner.style.background = '#eef2ff';
+      banner.style.border = '1px solid #c7d2fe';
+      banner.style.color = '#1e3a8a';
+    }
+    banner.innerText = text;
+    document.body.prepend(banner);
+    // auto-hide after 6s
+    setTimeout(() => { banner.remove(); }, 6000);
+  }
+
+  // legge query param
+  function getParam(key) {
+    const p = new URLSearchParams(location.search);
+    return p.get(key);
+  }
+
+  (async () => {
+    const just = getParam('justLogged');
+    if (just) {
+      // chiediamo al server l'username dalla sessione (più sicuro che passare username in chiaro nell'URL)
+      try {
+        const r = await fetch('/session-info');
+        if (r.ok) {
+          const j = await r.json();
+          const name = j.user || 'utente';
+          showBanner(`Login OK: ${name}`, 'success');
+        } else {
+          showBanner('Login OK', 'success');
+        }
+      } catch (e) {
+        showBanner('Login OK', 'success');
+      }
+      // rimuove il flag dalla URL per pulizia (senza ricaricare)
+      history.replaceState(null, '', location.pathname);
+    }
+  })();
+</script>
+

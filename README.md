@@ -24,8 +24,8 @@ Questo progetto dimostra come un attacco di SQL Injection possa compromettere la
 
 ## Esecuzione degli Attacchi SQL Injection
 
-1. Aprire un nuovo terminale.
-2. Eseguire `docker-compose exec web npm run attack` per avviare gli attacchi automatizzati.
+1. Aprire la web app in localhost:3000.
+2. Applicare SQL-Injection tramite il form
 
 ## Tipi di Attacchi Eseguiti
 
@@ -33,8 +33,7 @@ Questo progetto dimostra come un attacco di SQL Injection possa compromettere la
 - **Commento di Fine Riga**
 - **Query Piggybacked**
 - **Unione (UNION)**
-- **Errore Basato (Error-Based)**
-- **Subquery**
+
 
 ## Misure di Sicurezza
 

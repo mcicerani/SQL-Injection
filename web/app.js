@@ -1,18 +1,31 @@
-// app.js - SQLi demo (VULNERABLE) - usare SOLO in ambiente di test
+// web/app.js
+// SQLi demo - login che mostra direttamente la pagina di search dopo login
+// USARE SOLO IN LAB/AMBIENTE DI TEST - questo codice è INTENZIONALMENTE VULNERABILE
+
 const express = require('express');
 const mysql = require('mysql');
 const path = require('path');
+const session = require('express-session');
 
 const app = express();
-app.use(express.urlencoded({ extended: false })); // parse form urlencoded
+app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
-// serve static frontend da web/public (metti index.html in web/public)
+// session semplice in-memory (solo per demo)
+// in produzione usare store persistente e cookie secure
+app.use(session({
+  secret: 'demo_secret_change_me',
+  resave: false,
+  saveUninitialized: false,
+  cookie: { secure: false, httpOnly: true }
+}));
+
+// serve static files dalla cartella public
 app.use(express.static(path.join(__dirname, 'public')));
 
+// DB connection con retry (non fare uscire il processo se DB non pronto)
 let db;
 let connecting = false;
-
 function connectDB() {
   if (connecting) return;
   connecting = true;
@@ -22,14 +35,14 @@ function connectDB() {
     user: process.env.DB_USER || 'user',
     password: process.env.DB_PASS || 'password',
     database: process.env.DB_NAME || 'testdb',
-    multipleStatements: true // PER DEMO: permette piggy-back / stacked queries
+    multipleStatements: true // PER DEMO: abilita piggy-back (rimuovere in produzione)
   });
 
   db.connect((err) => {
     connecting = false;
     if (err) {
-      console.error('DB connect error', err.code || err);
-      // riprova dopo 2 secondi
+      console.error('DB connect error', err && err.code ? err.code : err);
+      // riprova dopo 2s
       setTimeout(connectDB, 2000);
       return;
     }
@@ -37,91 +50,117 @@ function connectDB() {
   });
 
   db.on('error', (err) => {
-    console.error('Database error:', err.code || err);
-    // se la connessione è persa, prova a riconnettere
-    if (err.code === 'PROTOCOL_CONNECTION_LOST' || err.fatal) {
+    console.error('Database error:', err && err.code ? err.code : err);
+    if (err && (err.code === 'PROTOCOL_CONNECTION_LOST' || err.fatal)) {
       console.log('Reconnecting to DB...');
       setTimeout(connectDB, 2000);
     }
   });
 }
-
-// Avvia la connessione (gestita con retry)
 connectDB();
 
-// --- ROUTES VULNERABILI PER LA DEMO ---
+// middleware per proteggere le route che richiedono autenticazione
+function requireLogin(req, res, next) {
+  if (req.session && req.session.authenticated) return next();
+  return res.redirect('/');
+}
 
-// GET /search?user=...  -> stampa risultati della query (vulnerabile)
-app.get('/search', (req, res) => {
-  const user = req.query.user || '';
-  // VULNERABLE: concatenazione diretta (per demo)
-  const query = `SELECT id, username, password FROM users WHERE username = '${user}'`;
+/*
+  ROUTE:
+  - GET /            -> login page (public/index.html)
+  - POST /login      -> login vulnerabile (se OK: imposta sessione e risponde con la pagina di search)
+  - GET /search      -> protetta: serve public/search.html
+  - GET /search/result?user=... -> protetta: esegue query vulnerabile e mostra risultati
+  - GET /logout      -> logout
+*/
 
-  console.log(`Executing (vulnerable) query: ${query}`);
-
-  // Se DB non è pronto, rispondi con messaggio amichevole
-  if (!db || db.state === 'disconnected') {
-    return res.status(503).send('<h3>Database non disponibile, riprova fra poco.</h3>');
-  }
-
-  db.query(query, (err, results) => {
-    if (err) {
-      console.error('Query error: ', err);
-      return res.status(500).send(`<pre>DB error: ${err.code}\n${err.sqlMessage || ''}</pre>`);
-    }
-
-    let html = '<h1>Users</h1>';
-    if (!results.length) html += '<p><i>Nessun risultato</i></p>';
-    results.forEach(row => {
-      html += `<p>id: ${row.id} - Name: ${row.username} - Password: ${row.password}</p>`;
-    });
-    res.send(html);
-  });
-});
-
-// POST /login -> demo login vulnerabile (form POST from /)
+// POST /login (con redirect e flash via query)
 app.post('/login', (req, res) => {
   const username = req.body.username || '';
   const password = req.body.password || '';
 
-  // VULNERABLE: concatenazione diretta (mostrare per demo)
   const query = `SELECT id, username FROM users WHERE username = '${username}' AND password = '${password}'`;
-  console.log(`Eseguo query (vulnerable): ${query}`);
+  console.log(`Eseguo query (vulnerable login): ${query}`);
 
   if (!db || db.state === 'disconnected') {
-    return res.status(503).send('<h3>Database non disponibile, riprova fra poco.</h3>');
+    return res.status(503).send('<h3>Database non disponibile, riprova più tardi.</h3>');
   }
 
   db.query(query, (err, results) => {
     if (err) {
-      console.error('Query error:', err);
-      return res.status(500).send('Errore DB');
+      console.error('Query error (login):', err);
+      // redirect with error flag (puoi migliorare includendo un codice se vuoi)
+      return res.redirect('/?error=1');
     }
     if (results.length > 0) {
-      const u = results[0];
-      return res.send(`<h2>Login OK: ${u.username} (id=${u.id})</h2>`);
+      // login ok -> crea sessione
+      req.session.authenticated = true;
+      req.session.user = results[0].username;
+      // redirect diretto a /search e flag di welcome
+      return res.redirect('/search?justLogged=1');
     } else {
-      return res.status(401).send('<h2>Login fallito</h2>');
+      // login fallito -> redirect alla home con flag di errore
+      return res.redirect('/?error=1');
     }
   });
 });
 
-// Optional: route che mostra le istruzioni base (se vuoi)
-app.get('/help', (req, res) => {
-  res.send(`
-    <h2>Demo SQLi - istruzioni</h2>
-    <p>Usa il form in <a href="/">frontend</a> oppure /search?user=...</p>
-    <ul>
-      <li>Tautology (bypass): <code>' OR '1'='1' --</code></li>
-      <li>Commento EOL (mirato): <code>admin' --</code></li>
-      <li>Piggy-back (UPDATE example): <code>anything'; UPDATE testdb.users SET password='pwned' WHERE username='admin'; --</code></li>
-    </ul>
-    <p><strong>ATTENZIONE:</strong> piggy-back è distruttivo; fai backup prima.</p>
-  `);
+// endpoint che restituisce info sulla sessione (usato dal client per mostrare username)
+app.get('/session-info', (req, res) => {
+  if (req.session && req.session.authenticated) {
+    return res.json({ user: req.session.user });
+  }
+  return res.status(401).json({ user: null });
 });
 
-// start server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Server is running on port ${PORT}`);
+// GET /search - protetta (serve il form di ricerca)
+app.get('/search', requireLogin, (req, res) => {
+  console.log('[DEBUG] GET /search session:', req.session && req.session.user);
+  res.sendFile(path.join(__dirname, 'public', 'search.html'));
 });
+
+// GET /search/result - protetta - esegue la query vulnerabile e mostra risultati
+app.get('/search/result', requireLogin, (req, res) => {
+  const user = req.query.user || '';
+
+  // VULNERABLE: concatenazione diretta (solo demo)
+  const query = `SELECT id, username, password FROM users WHERE username = '${user}'`;
+  console.log(`Eseguo (vulnerable search): ${query}`);
+
+  if (!db || db.state === 'disconnected') {
+    return res.status(503).send('<h3>Database non disponibile, riprova più tardi.</h3>');
+  }
+
+  db.query(query, (err, results) => {
+    if (err) {
+      console.error('Query error (search):', err);
+      return res.status(500).send(`<pre>DB error: ${err.code}\n${err.sqlMessage || ''}</pre>`);
+    }
+
+    let html = `<h1>Search results (utente loggato: ${req.session.user})</h1>`;
+    if (!results.length) html += '<p><i>Nessun risultato</i></p>';
+    results.forEach(row => {
+      html += `<p>id: ${row.id} - Name: ${row.username} - Password: ${row.password}</p>`;
+    });
+    html += `<p><a href="/search">Nuova ricerca</a> | <a href="/logout">Logout</a></p>`;
+    res.send(html);
+  });
+});
+
+// GET /logout
+app.get('/logout', (req, res) => {
+  req.session.destroy(() => {
+    res.redirect('/');
+  });
+});
+
+// help route (opzionale)
+app.get('/help', (req, res) => {
+  res.send(`<h2>Demo</h2>
+    <p>Login (POST /login) e la pagina di search apparirà direttamente se l'autenticazione ha successo.</p>
+    <p>Esempi payload login: <code>' OR '1'='1' --</code> | <code>admin' #</code></p>
+    <p>Esempi payload search: <code>' UNION SELECT 1, username, password FROM users --</code></p>`);
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`Server is running on port ${PORT}`));
