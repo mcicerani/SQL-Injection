@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="it">
+<head>
+  <meta charset="utf-8"/>
+  <title>SQLi Demo - Login</title>
+  <style>
+    body{font-family:system-ui, sans-serif;max-width:720px;margin:40px auto;}
+    input,button{font-size:16px;padding:8px}
+    form{display:flex;flex-direction:column;gap:8px}
+    .card{padding:12px;border:1px solid #ddd;border-radius:8px}
+  </style>
+</head>
+<body>
+  <h1>Login (Demo SQLi)</h1>
+  <div class="card">
+    <form method="post" action="/login">
+      <label>Username:<br><input name="username" autocomplete="off"/></label>
+      <label>Password:<br><input name="password" type="password" autocomplete="off"/></label>
+      <button type="submit">Login</button>
+    </form>
+    <div style="margin-top:12px;color:#666">
+      Esempi (solo lab):<br>
+      <code>Username: ' OR '1'='1' --  | Password: (vuoto)</code><br>
+      <code>Username: admin' --  | Password: (vuoto)</code>
+    </div>
+  </div>
+</body>
+</html>
