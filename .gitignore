@@ -1,0 +1,13 @@
+# Node modules
+/node_modules/
+web/node_modules/
+
+# DB locali
+*.db
+*.sqlite
+*.sqlite3
+
+# Env, logs, OS
+.env
+*.log
+.DS_Store
