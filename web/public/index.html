@@ -5,18 +5,19 @@
   <title>Login - SQLi Demo</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width:720px; margin:40px auto; }
-    input, button { padding:8px; font-size:16px; border: 1px solid #ccc; border-radius: 4px; }
+    input { padding:8px; font-size:16px; border: 1px solid #ccc; border-radius: 4px; }
+    button { padding:8px; font-size:16px; border: 1px solid #ccc; border-radius: 4px; background-color: #3b82f6; color: white; cursor: pointer; }
     form { display:flex; flex-direction:column; gap:8px; }
   </style>
 </head>
 <body>
   <h1>Login (demo)</h1>
   <form method="post" action="/login">
-    <input name="username" placeholder="username or payload" autocomplete="off" />
+    <input name="username" placeholder="username" autocomplete="off" />
     <input name="password" placeholder="password" autocomplete="off" />
     <button type="submit" >Login</button>
   </form>
-  <p style="color:#666">Esempi (solo lab): <code>' OR '1'='1' -- </code>| <code>admin' -- </code>| <code>anything'; INSERT INTO testdb.users (username,password) VALUES ('attacker','attackerpass'); -- </code></p>
+  <p style="color:#666">Esempi: <code>' OR '1'='1' -- </code> <br> <code>admin' -- </code> <br> <code>anything'; INSERT INTO testdb.users (username,password) VALUES ('attacker','attackerpass'); -- </code></p>
 </body>
 </html>
 

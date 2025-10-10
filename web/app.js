@@ -1,6 +1,5 @@
 // web/app.js
 // SQLi demo - login che mostra direttamente la pagina di search dopo login
-// USARE SOLO IN LAB/AMBIENTE DI TEST - questo codice è INTENZIONALMENTE VULNERABILE
 
 const express = require('express');
 const mysql = require('mysql');
@@ -12,7 +11,6 @@ app.use(express.urlencoded({ extended: false }));
 app.use(express.json());
 
 // session semplice in-memory (solo per demo)
-// in produzione usare store persistente e cookie secure
 app.use(session({
   secret: 'demo_secret_change_me',
   resave: false,
@@ -35,7 +33,7 @@ function connectDB() {
     user: process.env.DB_USER || 'user',
     password: process.env.DB_PASS || 'password',
     database: process.env.DB_NAME || 'testdb',
-    multipleStatements: true // PER DEMO: abilita piggy-back (rimuovere in produzione)
+    multipleStatements: true // abilita piggy-back 
   });
 
   db.connect((err) => {
@@ -65,15 +63,6 @@ function requireLogin(req, res, next) {
   return res.redirect('/');
 }
 
-/*
-  ROUTE:
-  - GET /            -> login page (public/index.html)
-  - POST /login      -> login vulnerabile (se OK: imposta sessione e risponde con la pagina di search)
-  - GET /search      -> protetta: serve public/search.html
-  - GET /search/result?user=... -> protetta: esegue query vulnerabile e mostra risultati
-  - GET /logout      -> logout
-*/
-
 // POST /login (con redirect e flash via query)
 app.post('/login', (req, res) => {
   const username = req.body.username || '';
@@ -89,17 +78,13 @@ app.post('/login', (req, res) => {
   db.query(query, (err, results) => {
     if (err) {
       console.error('Query error (login):', err);
-      // redirect with error flag (puoi migliorare includendo un codice se vuoi)
       return res.redirect('/?error=1');
     }
     if (results.length > 0) {
-      // login ok -> crea sessione
       req.session.authenticated = true;
       req.session.user = results[0].username;
-      // redirect diretto a /search e flag di welcome
       return res.redirect('/search?justLogged=1');
     } else {
-      // login fallito -> redirect alla home con flag di errore
       return res.redirect('/?error=1');
     }
   });

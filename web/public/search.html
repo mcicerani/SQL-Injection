@@ -5,14 +5,15 @@
   <title>Search - SQLi Demo</title>
   <style>
     body { font-family: system-ui, sans-serif; max-width:720px; margin:40px auto; }
-    input, button { padding:8px; font-size:16px; }
+    input { padding:8px; font-size:16px; width: 100%; }
+    button { padding:8px; font-size:16px; border: 1px solid #ccc; border-radius: 4px; background-color: #3b82f6; color: white; cursor: pointer; }
     form { display:flex; gap:8px; }
   </style>
 </head>
 <body>
   <h1>Search (protetta)</h1>
   <form method="get" action="/search/result">
-    <input name="user" placeholder="Inserisci username o payload" autocomplete="off" />
+    <input name="user" placeholder="Inserisci username" autocomplete="off" />
     <button type="submit">Cerca</button>
   </form>
   <p style="color:#666">Esempio UNION (esfiltrazione): <code>' UNION SELECT 1, username, password FROM users -- </code></p>
@@ -20,7 +21,6 @@
 </body>
 </html>
 
-<!-- aggiungi questo blocco <script> in fondo a web/public/search.html, prima di </body> -->
 <script>
   // helper: mostra un banner in cima alla pagina
   function showBanner(text, type = 'info') {
