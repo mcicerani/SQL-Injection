@@ -10,3 +10,8 @@
 .env
 *.log
 .DS_Store
+
+# intermedi screenshot
+web/screenshots/resp_*.html
+web/screenshots/shot_*.html
+web/screenshots/build_wrappers.py

