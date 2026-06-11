@@ -142,9 +142,7 @@ app.get('/logout', (req, res) => {
 // help route (opzionale)
 app.get('/help', (req, res) => {
   res.send(`<h2>Demo</h2>
-    <p>Login (POST /login) e la pagina di search apparirà direttamente se l'autenticazione ha successo.</p>
-    <p>Esempi payload login: <code>' OR '1'='1' --</code> | <code>admin' #</code></p>
-    <p>Esempi payload search: <code>' UNION SELECT 1, username, password FROM users --</code></p>`);
+    <p>Login (POST /login) e la pagina di search apparirà direttamente se l'autenticazione ha successo.</p>`);
 });
 
 const PORT = process.env.PORT || 3000;
